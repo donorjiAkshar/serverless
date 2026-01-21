@@ -1,0 +1,276 @@
+service: fullstack-serverless-app
+frameworkVersion: "3"
+
+useDotenv: true
+
+plugins:
+  - serverless-offline
+  - serverless-offline-sqs
+
+custom:
+  bucketName: fullstack-serverless-app-local-uploads
+  cognitoUserPoolId: ${env:COGNITO_USER_POOL_ID, 'local'}
+  cognitoUserPoolClientId: ${env:COGNITO_USER_POOL_CLIENT_ID, 'local'}
+  serverless-offline:
+    ignoreJWTSignature: true
+  serverless-offline-sqs:
+    autoCreate: false  # Using existing queue
+    apiVersion: '2012-11-05'
+    endpoint: https://sqs.eu-north-1.amazonaws.com  # AWS endpoint
+    region: eu-north-1
+    accessKeyId: ${env:AWS_ACCESS_KEY_ID}
+    secretAccessKey: ${env:AWS_SECRET_ACCESS_KEY}
+    skipCacheInvalidation: false
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: eu-north-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    COGNITO_USER_POOL_ID: ${self:custom.cognitoUserPoolId}
+    COGNITO_USER_POOL_CLIENT_ID: ${self:custom.cognitoUserPoolClientId}
+    COGNITO_USER_POOL_CLIENT_SECRET: ${env:COGNITO_USER_POOL_CLIENT_SECRET, ''}
+    TABLE_NAME: UsersTable
+    BUCKET_NAME: ${self:custom.bucketName}
+    SNS_TOPIC_ARN: !Ref AppSNSTopic
+    SQS_QUEUE_URL: !Ref AppSQSQueue
+    KINESIS_STREAM_NAME: AppKinesisStream
+    IS_OFFLINE: "${opt:offline, 'false'}"
+  httpApi:
+    authorizers:
+      cognitoAuth:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${aws:region}.amazonaws.com/${self:custom.cognitoUserPoolId}
+        audience:
+          - ${self:custom.cognitoUserPoolClientId}
+
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:*
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - dynamodb:*
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - sns:Publish
+            - sns:Subscribe
+            - sns:Unsubscribe
+            - sns:ListSubscriptionsByTopic
+          Resource: !Ref AppSNSTopic
+        - Effect: Allow
+          Action:
+            - sqs:*
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - kinesis:*
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - cognito-idp:AdminConfirmSignUp
+          Resource: 
+            - !GetAtt CognitoUserPool.Arn
+
+
+functions:
+  auth:
+    handler: src/handlers/auth.handler
+    events:
+      - httpApi:
+          path: /auth/{action}
+          method: post
+
+  me:
+    handler: src/handlers/me.handler
+    events:
+      - httpApi:
+          path: /me
+          method: get
+          authorizer:
+            name: cognitoAuth
+
+  uploadToS3:
+    handler: src/handlers/uploadToS3.handler
+    events:
+      - httpApi:
+          path: /upload
+          method: post
+
+  dynamoHandler:
+    handler: src/handlers/dynamoHandler.handler
+    events:
+      - httpApi:
+          path: /users
+          method: post
+          # authorizer:
+          #   name: cognitoAuth
+
+  snsPublisher:
+    handler: src/handlers/snsPublisher.handler
+    events:
+      - httpApi:
+          path: /notify
+          method: post
+
+  sqsConsumer:
+    handler: src/handlers/sqsConsumer.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - AppSQSQueue
+              - Arn
+
+  kinesisProducer:
+    handler: src/handlers/kinesisProducer.handler
+    events:
+      - httpApi:
+          path: /stream
+          method: post
+
+  # Subscription management endpoints
+  subscribeEmail:
+    handler: src/handlers/subscriptionHandler.subscribe
+    events:
+      - httpApi:
+          path: /subscribe
+          method: post
+
+  listSubscribers:
+    handler: src/handlers/subscriptionHandler.listSubscribers
+    events:
+      - httpApi:
+          path: /subscribers
+          method: get
+
+  unsubscribeEmail:
+    handler: src/handlers/subscriptionHandler.unsubscribe
+    events:
+      - httpApi:
+          path: /unsubscribe
+          method: post
+
+  eventBridgeHandler:
+    handler: src/handlers/eventBridgeHandler.handler
+    events:
+      - httpApi:
+          path: /test-event
+          method: post
+      - eventBridge:
+          pattern:
+            source:
+              - "custom.app"
+
+  testEventHandler:
+    handler: src/handlers/testEvent.handler
+    events:
+      - httpApi:
+          path: /events
+          method: get
+      - eventBridge:
+          pattern:
+            source:
+              - "custom.app"
+
+resources:
+  Resources:
+
+    KinesisStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-kinesis-stream
+        ShardCount: 1
+        RetentionPeriodHours: 24
+
+    AppBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: UsersTable
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: email-index
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    AppSNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: AppSNSTopic
+
+    AppSQSQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: AppSQSQueue
+
+    AppKinesisStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-kinesis-stream
+        ShardCount: 1
+
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:service}-${self:provider.stage}-user-pool
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireUppercase: true
+            RequireNumbers: true
+            RequireSymbols: true
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:service}-${self:provider.stage}-client
+        UserPoolId: !Ref CognitoUserPool
+        GenerateSecret: false
+        ExplicitAuthFlows:
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        PreventUserExistenceErrors: ENABLED
+
+  Outputs:
+    UserPoolId:
+      Description: "Cognito User Pool ID"
+      Value: !Ref CognitoUserPool
+      Export:
+        Name: ${self:service}-${self:provider.stage}-UserPoolId
+    UserPoolClientId:
+      Description: "Cognito User Pool Client ID"
+      Value: !Ref CognitoUserPoolClient
+      Export:
+        Name: ${self:service}-${self:provider.stage}-UserPoolClientId

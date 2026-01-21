@@ -1,0 +1,13 @@
+{
+  "name": "serverless-backend",
+  "version": "1.0.0",
+  "devDependencies": {
+    "serverless-offline": "^13.9.0",
+    "serverless-offline-sqs": "^8.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.958.0",
+    "aws-sdk": "^2.1480.0",
+    "uuid": "^9.0.0"
+  }
+}
