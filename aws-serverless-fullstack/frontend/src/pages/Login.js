@@ -38,7 +38,7 @@ const Login = () => {
         cognitoSub: meResponse.attributes.sub
       });
       
-      await streamAPI.sendToKinesis();
+      // await streamAPI.sendToKinesis();
       
       navigate('/dashboard');
     } catch (error) {
