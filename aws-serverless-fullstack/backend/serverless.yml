@@ -8,7 +8,7 @@ plugins:
   - serverless-offline-sqs
 
 custom:
-  bucketName: fullstack-serverless-app-local-uploads
+  bucketName: fullstack-serverless-app-local-uploads1
   cognitoUserPoolId: ${env:COGNITO_USER_POOL_ID, 'local'}
   cognitoUserPoolClientId: ${env:COGNITO_USER_POOL_CLIENT_ID, 'local'}
   serverless-offline:

@@ -1,6 +1,6 @@
 const { sns } = require('../utils/awsClients');
 
-const TOPIC_ARN = 'arn:aws:sns:eu-north-1:236262668532:MySNSTopic';
+const TOPIC_ARN = 'arn:aws:sns:eu-north-1:103703793113:MySNSTopic';
 
 // Subscribe an email to the SNS topic
 exports.subscribe = async (event) => {
